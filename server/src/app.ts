@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import path from 'path';
+import PDFDocument from 'pdfkit';
 
 type MulterFile = Express.Multer.File;
 
@@ -17,20 +18,13 @@ interface Application {
     officeLocation?: string;
     resumePath: string;
     createdAt: string;
+    coverLetter?: string;
 }
 
 interface CustomRequest extends express.Request {
     file?: MulterFile;
     body: {
-        fullName: string;
-        email: string;
-        phone: string;
-        coverLetter?: string;
-        salaryExpectation: string;
-        startDate?: string;
-        noticePeriod?: string;
-        isRemote?: string;
-        officeLocation?: string;
+        [key: string]: string;
     };
 }
 
@@ -56,14 +50,16 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
+// Health Check
 app.get('/api/health', (req: Request, res: Response) => {
     res.status(200).json({
         status: 'ok',
         timestamp: new Date().toISOString(),
-        version: '1.4.0'
+        version: '1.5.1'
     });
 });
 
+// Get Applications
 app.get('/api/applications', (req: Request, res: Response) => {
     try {
         const { search = '', sort = 'newest', page = 1, limit = 10 } = req.query;
@@ -102,6 +98,27 @@ app.get('/api/applications', (req: Request, res: Response) => {
     }
 });
 
+// Get Single Application
+app.get('/api/applications/:id', (req: Request, res: Response) => {
+    try {
+        const application = applications.find(app => app.id === req.params.id);
+        if (!application) {
+            res.status(404).json({ error: 'Application not found' });
+            return;
+        }
+
+        res.json({
+            ...application,
+            phone: '***' + application.phone.slice(-3),
+            email: application.email.replace(/(.{3}).+@(.+)/, '$1***@$2'),
+        });
+    } catch (error) {
+        console.error('Error fetching application:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Submit Application
 app.post('/api/application', upload.single('resume'), (req: Request, res: Response) => {
     try {
         if (!req.file) {
@@ -120,7 +137,8 @@ app.post('/api/application', upload.single('resume'), (req: Request, res: Respon
             isRemote: req.body.isRemote === 'true',
             officeLocation: req.body.officeLocation,
             resumePath: req.file.path,
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            coverLetter: req.body.coverLetter
         };
 
         applications = [newApplication, ...applications];
@@ -148,6 +166,46 @@ app.post('/api/application', upload.single('resume'), (req: Request, res: Respon
     } catch (error) {
         console.error('Error submitting application:', error);
         res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// PDF Export
+app.post('/api/export-pdf', (req: Request, res: Response) => {
+    try {
+        const { applicationId } = req.body;
+        const application = applications.find(app => app.id === applicationId);
+
+        if (!application) {
+            res.status(404).json({ error: 'Application not found' });
+            return;
+        }
+
+        const doc = new PDFDocument();
+        const filename = `application_${applicationId}.pdf`;
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        doc.pipe(res);
+
+        // PDF Content
+        doc.fontSize(18).text('Job Application Details', { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(12)
+            .text(`Name: ${application.fullName}`)
+            .text(`Email: ${application.email}`)
+            .text(`Salary Expectation: $${application.salaryExpectation.toLocaleString()}`)
+            .text(`Applied Date: ${new Date(application.createdAt).toLocaleDateString()}`);
+
+        if (application.coverLetter) {
+            doc.moveDown().text('Cover Letter:').moveDown(0.5);
+            doc.text(application.coverLetter, { width: 500, align: 'justify' });
+        }
+
+        doc.end();
+    } catch (error) {
+        console.error('PDF generation error:', error);
+        res.status(500).json({ error: 'Failed to generate PDF' });
     }
 });
 

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import axios from 'axios';
+import DatePicker from 'react-datepicker';
 import { customResolver } from './validators/customResolvers';
 import { ApplicationForm } from './types';
+import 'react-datepicker/dist/react-datepicker.css';
 
 const FORM_STEPS = [
   { title: 'Personal Information', fields: ['fullName', 'email', 'phone', 'resume'] },
@@ -11,12 +13,93 @@ const FORM_STEPS = [
 
 type ViewMode = 'form' | 'applications';
 
+interface ApplicationListItem {
+  id: string;
+  fullName: string;
+  email: string;
+  salaryExpectation: number;
+  startDate?: string;
+  isRemote: boolean;
+  createdAt: string;
+}
+
+const ApplicationModal = ({ application, onClose }: {
+  application: ApplicationListItem | null,
+  onClose: () => void
+}) => {
+  if (!application) return null;
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+        <h2>Application Details</h2>
+        <button className="close-button" onClick={onClose}>&times;</button>
+
+        <div className="details-grid">
+          <div className="detail-item">
+            <label>Name:</label>
+            <span>{application.fullName}</span>
+          </div>
+          <div className="detail-item">
+            <label>Email:</label>
+            <span>{application.email}</span>
+          </div>
+          <div className="detail-item">
+            <label>Salary:</label>
+            <span>${application.salaryExpectation.toLocaleString()}</span>
+          </div>
+          <div className="detail-item">
+            <label>Start Date:</label>
+            <span>{application.startDate ? new Date(application.startDate).toLocaleDateString() : '-'}</span>
+          </div>
+          <div className="detail-item">
+            <label>Remote:</label>
+            <span>{application.isRemote ? 'Yes' : 'No'}</span>
+          </div>
+          <div className="detail-item">
+            <label>Applied Date:</label>
+            <span>{new Date(application.createdAt).toLocaleDateString()}</span>
+          </div>
+        </div>
+
+        <button
+          className="export-button"
+          onClick={async () => {
+            try {
+              const response = await axios.post(
+                'http://localhost:3001/api/export-pdf',
+                { applicationId: application.id },
+                { responseType: 'blob' }
+              );
+              const url = window.URL.createObjectURL(new Blob([response.data]));
+              const link = document.createElement('a');
+              link.href = url;
+              link.setAttribute('download', `application_${application.id}.pdf`);
+              document.body.appendChild(link);
+              link.click();
+              link.remove();
+            } catch (error) {
+              console.error('Export failed:', error);
+              alert('Failed to export PDF');
+            }
+          }}
+        >
+          Export to PDF
+        </button>
+      </div>
+    </div>
+  );
+};
+
 export default function App() {
   const [currentStep, setCurrentStep] = useState(0);
   const [viewMode, setViewMode] = useState<ViewMode>('form');
-  const [applications, setApplications] = useState<any[]>([]);
+  const [applications, setApplications] = useState<ApplicationListItem[]>([]);
+  const [selectedApplication, setSelectedApplication] = useState<ApplicationListItem | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState('newest');
+  const [dateRange, setDateRange] = useState<[Date | null, Date | null]>([null, null]);
+  const [salaryFilter, setSalaryFilter] = useState<[number, number]>([30000, 500000]);
   const [pagination, setPagination] = useState({
     page: 1,
     limit: 10,
@@ -44,7 +127,6 @@ export default function App() {
   const salaryValue = watch('salaryExpectation');
   const allValues = watch();
 
-  // Form persistence
   useEffect(() => {
     localStorage.setItem('formData', JSON.stringify(allValues));
   }, [allValues]);
@@ -54,7 +136,6 @@ export default function App() {
     if (savedData) reset(JSON.parse(savedData));
   }, [reset]);
 
-  // Applications fetching
   useEffect(() => {
     if (viewMode === 'applications') {
       const fetchApplications = async () => {
@@ -124,7 +205,11 @@ export default function App() {
       <div className="view-switcher">
         <button
           className={viewMode === 'form' ? 'active' : ''}
-          onClick={() => setViewMode('form')}
+          onClick={() => {
+            setViewMode('form');
+            setCurrentStep(0);
+
+          }}
         >
           New Application
         </button>
@@ -150,7 +235,22 @@ export default function App() {
             ))}
           </div>
 
-          <form onSubmit={handleSubmit(onSubmit)} noValidate>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (currentStep === FORM_STEPS.length - 1) {
+                  handleSubmit(onSubmit)(e);
+                } else {
+                  handleNext();
+                }
+              }
+            }}
+            noValidate
+          >
             {currentStep === 0 && (
               <div className="form-step">
                 <div className="form-group">
@@ -208,7 +308,7 @@ export default function App() {
                     <span className="error">{errors.salaryExpectation.message}</span>
                   )}
                   <div className="current-salary">
-                    Current: ${salaryValue?.toLocaleString()}/yr
+                    Current: ${salaryValue.toLocaleString()}/yr
                   </div>
                 </div>
 
@@ -248,15 +348,12 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="form-group checkbox-group is-remote-group">
-                  <label htmlFor='isRemoteInput'>
-                    <input
-                      id='isRemoteInput'
-                      type="checkbox"
-                      {...register('isRemote')}
-                    />
-                    Remote Position
-                  </label>
+                <div className="form-group checkbox-group remote-group">
+                  Remote Position
+                  <input
+                    type="checkbox"
+                    {...register('isRemote')}
+                  />
                 </div>
 
                 {!isRemote && (
@@ -322,6 +419,40 @@ export default function App() {
             </select>
           </div>
 
+          <div className="advanced-filters">
+            <div className="filter-group">
+              <label>Date Range:</label>
+              <DatePicker
+                selectsRange
+                startDate={dateRange[0]}
+                endDate={dateRange[1]}
+                onChange={(update) => setDateRange(update)}
+                placeholderText="Select date range"
+                className="date-picker-input"
+              />
+            </div>
+            <div className="filter-group">
+              <label>Salary Range ($):</label>
+              <div className="salary-filter">
+                <input
+                  type="number"
+                  value={salaryFilter[0]}
+                  onChange={(e) => setSalaryFilter([Number(e.target.value), salaryFilter[1]])}
+                  min="30000"
+                  max="500000"
+                />
+                <span>to</span>
+                <input
+                  type="number"
+                  value={salaryFilter[1]}
+                  onChange={(e) => setSalaryFilter([salaryFilter[0], Number(e.target.value)])}
+                  min="30000"
+                  max="500000"
+                />
+              </div>
+            </div>
+          </div>
+
           {isLoadingApplications ? (
             <div className="loading">Loading applications...</div>
           ) : (
@@ -340,19 +471,19 @@ export default function App() {
                   </thead>
                   <tbody>
                     {applications.map((app) => (
-                      <tr key={app.id}>
+                      <tr
+                        key={app.id}
+                        onClick={() => setSelectedApplication(app)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyPress={(e) => e.key === 'Enter' && setSelectedApplication(app)}
+                      >
                         <td>{app.fullName}</td>
                         <td>{app.email}</td>
-                        <td>${app.salaryExpectation?.toLocaleString()}</td>
-                        <td>
-                          {app.startDate ?
-                            new Date(app.startDate).toLocaleDateString() :
-                            '-'}
-                        </td>
+                        <td>${app.salaryExpectation.toLocaleString()}</td>
+                        <td>{app.startDate ? new Date(app.startDate).toLocaleDateString() : '-'}</td>
                         <td>{app.isRemote ? 'Yes' : 'No'}</td>
-                        <td>
-                          {new Date(app.createdAt).toLocaleDateString()}
-                        </td>
+                        <td>{new Date(app.createdAt).toLocaleDateString()}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -362,10 +493,7 @@ export default function App() {
               <div className="pagination-controls">
                 <button
                   disabled={pagination.page === 1 || isLoadingApplications}
-                  onClick={() => setPagination(prev => ({
-                    ...prev,
-                    page: prev.page - 1
-                  }))}
+                  onClick={() => setPagination(prev => ({ ...prev, page: prev.page - 1 }))}
                 >
                   Previous
                 </button>
@@ -374,10 +502,7 @@ export default function App() {
                 </span>
                 <button
                   disabled={pagination.page >= pagination.totalPages || isLoadingApplications}
-                  onClick={() => setPagination(prev => ({
-                    ...prev,
-                    page: prev.page + 1
-                  }))}
+                  onClick={() => setPagination(prev => ({ ...prev, page: prev.page + 1 }))}
                 >
                   Next
                 </button>
@@ -385,6 +510,13 @@ export default function App() {
             </>
           )}
         </div>
+      )}
+
+      {selectedApplication && (
+        <ApplicationModal
+          application={selectedApplication}
+          onClose={() => setSelectedApplication(null)}
+        />
       )}
     </div>
   );
