@@ -61,7 +61,9 @@ app.post(
             const application = {
                 ...req.body,
                 resumePath: req.file.path,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent']
             };
 
             console.log('New application:', {
@@ -89,10 +91,6 @@ app.post(
                 });
             }, 1500);
 
-            res.status(201).json({
-                success: true,
-                applicationId: Date.now().toString(36) + Math.random().toString(36).substr(2)
-            });
         } catch (error) {
             console.error('Error submitting application:', error);
             res.status(500).json({ error: 'Internal server error' });

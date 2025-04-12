@@ -67,7 +67,23 @@ button:disabled {
 }
 
 .is-remote-group {
-  display: flex;;
+  display: flex;
+  ;
   flex-direction: row;
   align-items: center;
+}
+
+.form-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+  text-decoration: underline;
+  padding-bottom: 30px;
+}
+
+.form-navigation {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
 }
