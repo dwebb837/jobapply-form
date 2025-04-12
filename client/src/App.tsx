@@ -1,32 +1,38 @@
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
 import axios from 'axios';
-
-const applicationSchema = z.object({
-  fullName: z.string().min(2, "Name must be at least 2 characters"),
-  email: z.string().email("Invalid email address"),
-  phone: z.string().regex(/^\d{10}$/, "Invalid phone number"),
-  resume: z.instanceof(FileList).refine(files => files.length > 0, "Resume is required"),
-  coverLetter: z.string().optional(),
-  salaryExpectation: z.number().min(30000, "Minimum salary is $30,000").max(500000)
-});
-
-type ApplicationForm = z.infer<typeof applicationSchema>;
+import { customResolver } from './validators/customResolvers';
+import { ApplicationForm } from './types';
 
 export default function App() {
-  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<ApplicationForm>({
-    resolver: zodResolver(applicationSchema)
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors, isSubmitting }
+  } = useForm<ApplicationForm>({
+    resolver: customResolver,
+    defaultValues: {
+      isRemote: false,
+      salaryExpectation: 50000
+    }
   });
+
+  const isRemote = watch('isRemote');
+  const salaryValue = watch('salaryExpectation');
 
   const onSubmit = async (data: ApplicationForm) => {
     const formData = new FormData();
-    formData.append('fullName', data.fullName);
-    formData.append('email', data.email);
-    formData.append('phone', data.phone);
-    formData.append('salaryExpectation', data.salaryExpectation.toString());
-    formData.append('resume', data.resume[0]);
-    if (data.coverLetter) formData.append('coverLetter', data.coverLetter);
+    Object.entries(data).forEach(([key, value]) => {
+      if (value instanceof FileList) {
+        formData.append(key, value[0]);
+      } else if (value instanceof Date) {
+        formData.append(key, value.toISOString());
+      } else if (typeof value === 'boolean') {
+        formData.append(key, value ? 'true' : 'false');
+      } else if (value !== undefined) {
+        formData.append(key, value.toString());
+      }
+    });
 
     try {
       const baseUrl = 'http://localhost:3001';
@@ -44,7 +50,7 @@ export default function App() {
   return (
     <div className="container">
       <h1>Job Application Form</h1>
-      <form onSubmit={handleSubmit(onSubmit)}>
+      <form onSubmit={handleSubmit(onSubmit)} noValidate>
         <div className="form-group">
           <label>Full Name</label>
           <input {...register('fullName')} />
@@ -65,22 +71,94 @@ export default function App() {
 
         <div className="form-group">
           <label>Salary Expectation ($)</label>
-          <input type="number" {...register('salaryExpectation', { valueAsNumber: true })} />
+          <input
+            type="number"
+            {...register('salaryExpectation', { valueAsNumber: true })}
+            min="30000"
+            max="500000"
+          />
+          <div className="salary-range">
+            <span>$30k/yr</span>
+            <input
+              type="range"
+              {...register('salaryExpectation', { valueAsNumber: true })}
+              min="30000"
+              max="500000"
+              step="1000"
+            />
+            <span>$500k/yr</span>
+          </div>
           {errors.salaryExpectation && <span className="error">{errors.salaryExpectation.message}</span>}
+          <div className="current-salary">Current: ${salaryValue?.toLocaleString()}/yr</div>
         </div>
 
         <div className="form-group">
           <label>Resume (PDF only)</label>
-          <input type="file" accept=".pdf" {...register('resume')} />
+          <input
+            type="file"
+            accept=".pdf"
+            {...register('resume')}
+          />
           {errors.resume && <span className="error">{errors.resume.message}</span>}
         </div>
 
         <div className="form-group">
           <label>Cover Letter</label>
-          <textarea {...register('coverLetter')} rows={4} />
+          <textarea
+            {...register('coverLetter')}
+            rows={4}
+            placeholder="Describe your qualifications..."
+          />
+          {errors.coverLetter && <span className="error">{errors.coverLetter.message}</span>}
         </div>
 
-        <button type="submit" disabled={isSubmitting}>
+        <div className="form-group">
+          <label>Start Date</label>
+          <input
+            type="date"
+            {...register('startDate', { valueAsDate: true })}
+            min={new Date().toISOString().split('T')[0]}
+          />
+          {errors.startDate && <span className="error">{errors.startDate.message}</span>}
+        </div>
+
+        <div className="form-group">
+          <label>Notice Period (days)</label>
+          <input
+            type="number"
+            {...register('noticePeriod', { valueAsNumber: true })}
+            min="0"
+          />
+          {errors.noticePeriod && <span className="error">{errors.noticePeriod.message}</span>}
+        </div>
+
+        <div className="form-group checkbox-group is-remote-group">
+          <label htmlFor='isRemoteInput'>
+            Remote Position
+          </label>
+          <input
+              id='isRemoteInput'
+              type="checkbox"
+              {...register('isRemote')}
+          />
+        </div>
+
+        {!isRemote && (
+          <div className="form-group">
+            <label>Office Location</label>
+            <input
+              {...register('officeLocation')}
+              placeholder="Enter office address"
+            />
+            {errors.officeLocation && <span className="error">{errors.officeLocation.message}</span>}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className={isSubmitting ? 'submitting' : ''}
+        >
           {isSubmitting ? 'Submitting...' : 'Submit Application'}
         </button>
       </form>
