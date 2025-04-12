@@ -9,8 +9,22 @@ const FORM_STEPS = [
   { title: 'Professional Details', fields: ['salaryExpectation', 'coverLetter', 'startDate', 'noticePeriod', 'isRemote', 'officeLocation'] }
 ];
 
+type ViewMode = 'form' | 'applications';
+
 export default function App() {
   const [currentStep, setCurrentStep] = useState(0);
+  const [viewMode, setViewMode] = useState<ViewMode>('form');
+  const [applications, setApplications] = useState<any[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortBy, setSortBy] = useState('newest');
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1
+  });
+  const [isLoadingApplications, setIsLoadingApplications] = useState(false);
+
   const {
     register,
     handleSubmit,
@@ -30,44 +44,75 @@ export default function App() {
   const salaryValue = watch('salaryExpectation');
   const allValues = watch();
 
-  // Save form data to localStorage on change
+  // Form persistence
   useEffect(() => {
     localStorage.setItem('formData', JSON.stringify(allValues));
   }, [allValues]);
 
-  // Load draft on mount
   useEffect(() => {
     const savedData = localStorage.getItem('formData');
-    if (savedData) {
-      reset(JSON.parse(savedData));
-    }
+    if (savedData) reset(JSON.parse(savedData));
   }, [reset]);
+
+  // Applications fetching
+  useEffect(() => {
+    if (viewMode === 'applications') {
+      const fetchApplications = async () => {
+        setIsLoadingApplications(true);
+        try {
+          const response = await axios.get('http://localhost:3001/api/applications', {
+            params: {
+              search: searchTerm,
+              sort: sortBy,
+              page: pagination.page,
+              limit: pagination.limit
+            }
+          });
+          setApplications(response.data.results);
+          setPagination(prev => ({
+            ...prev,
+            total: response.data.total,
+            totalPages: response.data.totalPages
+          }));
+        } catch (error) {
+          console.error('Error fetching applications:', error);
+          alert('Failed to load applications');
+        } finally {
+          setIsLoadingApplications(false);
+        }
+      };
+      fetchApplications();
+    }
+  }, [viewMode, searchTerm, sortBy, pagination.page]);
 
   const handleNext = async () => {
     const isValid = await trigger(FORM_STEPS[currentStep].fields as any);
     if (isValid) setCurrentStep(prev => Math.min(prev + 1, FORM_STEPS.length - 1));
   };
 
-  const handleBack = () => {
-    setCurrentStep(prev => Math.max(prev - 1, 0));
-  };
+  const handleBack = () => setCurrentStep(prev => Math.max(prev - 1, 0));
 
   const onSubmit = async (data: ApplicationForm) => {
     const formData = new FormData();
     Object.entries(data).forEach(([key, value]) => {
-      if (value instanceof FileList) formData.append(key, value[0]);
-      else if (value instanceof Date) formData.append(key, value.toISOString());
-      else if (typeof value === 'boolean') formData.append(key, value ? 'true' : 'false');
-      else if (value !== undefined) formData.append(key, value.toString());
+      if (value instanceof FileList) {
+        formData.append(key, value[0]);
+      } else if (value instanceof Date) {
+        formData.append(key, value.toISOString());
+      } else if (typeof value === 'boolean') {
+        formData.append(key, value ? 'true' : 'false');
+      } else if (value !== undefined) {
+        formData.append(key, value.toString());
+      }
     });
 
     try {
-      const response = await axios.post('http://localhost:3001/api/application', formData, {
+      await axios.post('http://localhost:3001/api/application', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      console.log('Submission successful:', response.data);
       localStorage.removeItem('formData');
       alert('Application submitted successfully!');
+      setViewMode('applications');
     } catch (error) {
       console.error('Submission error:', error);
       alert('Error submitting application');
@@ -76,150 +121,271 @@ export default function App() {
 
   return (
     <div className="container">
-      <h1>Job Application Form</h1>
-      <div className="form-progress">
-        {FORM_STEPS.map((step, index) => (
-          <div
-            key={step.title}
-            className={`step ${index === currentStep ? 'active' : ''}`}
-          >
-            {index + 1}. {step.title}
-          </div>
-        ))}
+      <div className="view-switcher">
+        <button
+          className={viewMode === 'form' ? 'active' : ''}
+          onClick={() => setViewMode('form')}
+        >
+          New Application
+        </button>
+        <button
+          className={viewMode === 'applications' ? 'active' : ''}
+          onClick={() => setViewMode('applications')}
+        >
+          View Applications ({pagination.total})
+        </button>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} noValidate>
-        {/* Step 1: Personal Information */}
-        {currentStep === 0 && (
-          <div className="form-step">
-            <div className="form-group">
-              <label>Full Name</label>
-              <input {...register('fullName')} />
-              {errors.fullName && <span className="error">{errors.fullName.message}</span>}
-            </div>
-
-            <div className="form-group">
-              <label>Email</label>
-              <input type="email" {...register('email')} />
-              {errors.email && <span className="error">{errors.email.message}</span>}
-            </div>
-
-            <div className="form-group">
-              <label>Phone</label>
-              <input {...register('phone')} />
-              {errors.phone && <span className="error">{errors.phone.message}</span>}
-            </div>
-
-            <div className="form-group">
-              <label>Resume (PDF only)</label>
-              <input
-                type="file"
-                accept=".pdf"
-                {...register('resume')}
-              />
-              {errors.resume && <span className="error">{errors.resume.message}</span>}
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Professional Details */}
-        {currentStep === 1 && (
-          <div className="form-step">
-            <div className="form-group">
-              <label>Salary Expectation ($)</label>
-              <input
-                type="number"
-                {...register('salaryExpectation', { valueAsNumber: true })}
-                min="30000"
-                max="500000"
-              />
-              <div className="salary-range">
-                <span>$30k/yr</span>
-                <input
-                  type="range"
-                  {...register('salaryExpectation', { valueAsNumber: true })}
-                  min="30000"
-                  max="500000"
-                  step="1000"
-                />
-                <span>$500k/yr</span>
+      {viewMode === 'form' ? (
+        <>
+          <h1>Job Application Form</h1>
+          <div className="form-progress">
+            {FORM_STEPS.map((step, index) => (
+              <div
+                key={step.title}
+                className={`step ${index === currentStep ? 'active' : ''}`}
+              >
+                {index + 1}. {step.title}
               </div>
-              {errors.salaryExpectation && <span className="error">{errors.salaryExpectation.message}</span>}
-              <div className="current-salary">Current: ${salaryValue?.toLocaleString()}/yr</div>
-            </div>
+            ))}
+          </div>
 
-            <div className="form-group">
-              <label>Cover Letter</label>
-              <textarea
-                {...register('coverLetter')}
-                rows={4}
-                placeholder="Describe your qualifications..."
-              />
-              {errors.coverLetter && <span className="error">{errors.coverLetter.message}</span>}
-            </div>
+          <form onSubmit={handleSubmit(onSubmit)} noValidate>
+            {currentStep === 0 && (
+              <div className="form-step">
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input {...register('fullName')} />
+                  {errors.fullName && <span className="error">{errors.fullName.message}</span>}
+                </div>
 
-            <div className="form-group">
-              <label>Start Date</label>
-              <input
-                type="date"
-                {...register('startDate', { valueAsDate: true })}
-                min={new Date().toISOString().split('T')[0]}
-              />
-              {errors.startDate && <span className="error">{errors.startDate.message}</span>}
-            </div>
+                <div className="form-group">
+                  <label>Email</label>
+                  <input type="email" {...register('email')} />
+                  {errors.email && <span className="error">{errors.email.message}</span>}
+                </div>
 
-            <div className="form-group">
-              <label>Notice Period (days)</label>
-              <input
-                type="number"
-                {...register('noticePeriod', { valueAsNumber: true })}
-                min="0"
-              />
-              {errors.noticePeriod && <span className="error">{errors.noticePeriod.message}</span>}
-            </div>
+                <div className="form-group">
+                  <label>Phone</label>
+                  <input {...register('phone')} />
+                  {errors.phone && <span className="error">{errors.phone.message}</span>}
+                </div>
 
-            <div className="form-group checkbox-group is-remote-group">
-              <label htmlFor='isRemoteInput'>
-                Remote Position
-              </label>
-              <input
-                id='isRemoteInput'
-                type="checkbox"
-                {...register('isRemote')}
-              />
-            </div>
-
-            {!isRemote && (
-              <div className="form-group">
-                <label>Office Location</label>
-                <input
-                  {...register('officeLocation')}
-                  placeholder="Enter office address"
-                />
-                {errors.officeLocation && <span className="error">{errors.officeLocation.message}</span>}
+                <div className="form-group">
+                  <label>Resume (PDF only)</label>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    {...register('resume')}
+                  />
+                  {errors.resume && <span className="error">{errors.resume.message}</span>}
+                </div>
               </div>
             )}
+
+            {currentStep === 1 && (
+              <div className="form-step">
+                <div className="form-group">
+                  <label>Salary Expectation ($)</label>
+                  <input
+                    type="number"
+                    {...register('salaryExpectation', { valueAsNumber: true })}
+                    min="30000"
+                    max="500000"
+                  />
+                  <div className="salary-range">
+                    <span>$30k/yr</span>
+                    <input
+                      type="range"
+                      {...register('salaryExpectation', { valueAsNumber: true })}
+                      min="30000"
+                      max="500000"
+                      step="1000"
+                    />
+                    <span>$500k/yr</span>
+                  </div>
+                  {errors.salaryExpectation && (
+                    <span className="error">{errors.salaryExpectation.message}</span>
+                  )}
+                  <div className="current-salary">
+                    Current: ${salaryValue?.toLocaleString()}/yr
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Cover Letter</label>
+                  <textarea
+                    {...register('coverLetter')}
+                    rows={4}
+                    placeholder="Describe your qualifications..."
+                  />
+                  {errors.coverLetter && (
+                    <span className="error">{errors.coverLetter.message}</span>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label>Start Date</label>
+                  <input
+                    type="date"
+                    {...register('startDate', { valueAsDate: true })}
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                  {errors.startDate && (
+                    <span className="error">{errors.startDate.message}</span>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label>Notice Period (days)</label>
+                  <input
+                    type="number"
+                    {...register('noticePeriod', { valueAsNumber: true })}
+                    min="0"
+                  />
+                  {errors.noticePeriod && (
+                    <span className="error">{errors.noticePeriod.message}</span>
+                  )}
+                </div>
+
+                <div className="form-group checkbox-group is-remote-group">
+                  <label htmlFor='isRemoteInput'>
+                    <input
+                      id='isRemoteInput'
+                      type="checkbox"
+                      {...register('isRemote')}
+                    />
+                    Remote Position
+                  </label>
+                </div>
+
+                {!isRemote && (
+                  <div className="form-group">
+                    <label>Office Location</label>
+                    <input
+                      {...register('officeLocation')}
+                      placeholder="Enter office address"
+                    />
+                    {errors.officeLocation && (
+                      <span className="error">{errors.officeLocation.message}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="form-navigation">
+              {currentStep > 0 && (
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="secondary"
+                >
+                  Back
+                </button>
+              )}
+
+              {currentStep < FORM_STEPS.length - 1 ? (
+                <button type="button" onClick={handleNext}>
+                  Next
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className={isSubmitting ? 'submitting' : ''}
+                >
+                  {isSubmitting ? 'Submitting...' : 'Submit Application'}
+                </button>
+              )}
+            </div>
+          </form>
+        </>
+      ) : (
+        <div className="applications-view">
+          <div className="controls">
+            <input
+              type="text"
+              placeholder="Search by name or email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              disabled={isLoadingApplications}
+            />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              disabled={isLoadingApplications}
+            >
+              <option value="newest">Newest First</option>
+              <option value="oldest">Oldest First</option>
+              <option value="name">Sort by Name</option>
+            </select>
           </div>
-        )}
 
-        <div className="form-navigation">
-          {currentStep > 0 && (
-            <button type="button" onClick={handleBack} className="secondary">
-              Back
-            </button>
-          )}
-
-          {currentStep < FORM_STEPS.length - 1 ? (
-            <button type="button" onClick={handleNext}>
-              Next
-            </button>
+          {isLoadingApplications ? (
+            <div className="loading">Loading applications...</div>
           ) : (
-            <button type="submit" disabled={isSubmitting} className={isSubmitting ? 'submitting' : ''}>
-              {isSubmitting ? 'Submitting...' : 'Submit Application'}
-            </button>
+            <>
+              <div className="applications-list">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Email</th>
+                      <th>Salary</th>
+                      <th>Start Date</th>
+                      <th>Remote</th>
+                      <th>Applied Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {applications.map((app) => (
+                      <tr key={app.id}>
+                        <td>{app.fullName}</td>
+                        <td>{app.email}</td>
+                        <td>${app.salaryExpectation?.toLocaleString()}</td>
+                        <td>
+                          {app.startDate ?
+                            new Date(app.startDate).toLocaleDateString() :
+                            '-'}
+                        </td>
+                        <td>{app.isRemote ? 'Yes' : 'No'}</td>
+                        <td>
+                          {new Date(app.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="pagination-controls">
+                <button
+                  disabled={pagination.page === 1 || isLoadingApplications}
+                  onClick={() => setPagination(prev => ({
+                    ...prev,
+                    page: prev.page - 1
+                  }))}
+                >
+                  Previous
+                </button>
+                <span>
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+                <button
+                  disabled={pagination.page >= pagination.totalPages || isLoadingApplications}
+                  onClick={() => setPagination(prev => ({
+                    ...prev,
+                    page: prev.page + 1
+                  }))}
+                >
+                  Next
+                </button>
+              </div>
+            </>
           )}
         </div>
-      </form>
+      )}
     </div>
   );
 }
